@@ -1,0 +1,16 @@
+# Environment variables
+.env
+
+# Virtual environment
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Generated data
+data/
+
+# IDE / Editor specific
+.vscode/
+.idea/
+*.swp 
