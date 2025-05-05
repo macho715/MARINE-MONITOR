@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 import os, time, logging, datetime as dt, requests, pandas as pd, pytz
 from requests.adapters import HTTPAdapter, Retry
+from statsmodels.tsa.arima.model import ARIMA
+from pandas.errors import OutOfBoundsDatetime
+import streamlit as st # Keep streamlit import if needed for secrets in app.py
 
 # Constants
 LAT, LON = 24.541664, 54.29167 # Using original coordinates
@@ -151,14 +154,89 @@ def daily_table(df):
 
 # --- End Integrated Table Logic ---
 
+# --- Tide Fetching Function ---
+def fetch_tide(lat, lon, api_key, days=7):
+    """Fetches tide data from WorldTides API."""
+    if not api_key:
+        logging.warning("WorldTides API key not provided. Skipping tide data fetch.")
+        return pd.DataFrame(columns=["time", "tide_m"]) # Return empty DataFrame
+        
+    url = "https://www.worldtides.info/api/v3?heights"
+    params = dict(lat=lat, lon=lon, days=days, key=api_key)
+    try:
+        js = requests.get(url, params=params, timeout=15).json() # Increased timeout
+        if 'error' in js:
+            logging.error(f"WorldTides API error: {js['error']}")
+            return pd.DataFrame(columns=["time", "tide_m"])
+            
+        df = pd.DataFrame(js.get("heights", []))
+        if df.empty:
+            logging.warning("WorldTides API returned no height data.")
+            return pd.DataFrame(columns=["time", "tide_m"])
+            
+        df["time"] = pd.to_datetime(df["date"])
+        df["time"] = df["time"].dt.tz_convert(None) # Convert to naive UTC for merging
+        return df[["time", "height"]].rename(columns={"height": "tide_m"})
+    except requests.exceptions.RequestException as e:
+        logging.error(f"WorldTides API request failed: {e}")
+        return pd.DataFrame(columns=["time", "tide_m"])
+    except Exception as e:
+        logging.error(f"Error processing tide data: {e}")
+        return pd.DataFrame(columns=["time", "tide_m"])
+# --- End Tide Fetching ---
 
-def fetch_and_process_data():
-    """Fetches 7-day data, processes it, generates tables, and returns results."""
+# --- ARIMA Forecasting Function ---
+def generate_arima_forecast(wave_series):
+    """Generates 48-hour ARIMA forecast for wave height."""
+    if wave_series.empty or wave_series.isnull().all():
+        logging.warning("Wave data is empty or all null, cannot generate ARIMA forecast.")
+        return pd.DataFrame(columns=["time", "wave_pred"])
+        
+    try:
+        # Ensure data is float and handle potential NaNs (e.g., forward fill)
+        train_data = wave_series.astype(float).ffill().bfill() # Fill NaNs
+        if train_data.isnull().any(): # Still NaNs after filling?
+             logging.warning("Could not fill all NaNs in wave data for ARIMA.")
+             return pd.DataFrame(columns=["time", "wave_pred"])
+
+        # Define and fit the ARIMA model (using p=2, d=0, q=2 as in example)
+        # Order (p,d,q): AR order, differencing order, MA order
+        # Simple order, might need tuning based on data characteristics
+        model = ARIMA(train_data, order=(2, 0, 2))
+        model_fit = model.fit()
+        
+        # Forecast next 48 steps (hours)
+        forecast_values = model_fit.forecast(steps=48)
+        
+        # Create forecast timestamps
+        last_timestamp = wave_series.index.max()
+        # Use pd.date_range for robust timestamp generation
+        forecast_index = pd.date_range(start=last_timestamp + pd.Timedelta(hours=1), periods=48, freq='h')
+        
+        # Create forecast DataFrame
+        df_pred = pd.DataFrame({"time": forecast_index, "wave_pred": forecast_values})
+        # Ensure time is naive UTC like the main df
+        df_pred["time"] = df_pred["time"].dt.tz_convert(None)
+        logging.info("ARIMA forecast generated successfully.")
+        return df_pred
+        
+    except OutOfBoundsDatetime:
+         logging.error("Timestamp issue during ARIMA forecast index generation.")
+         return pd.DataFrame(columns=["time", "wave_pred"])
+    except Exception as e:
+        logging.error(f"Error during ARIMA model fitting or forecasting: {e}")
+        # Return empty dataframe on error
+        return pd.DataFrame(columns=["time", "wave_pred"])
+# --- End ARIMA Forecasting ---
+
+def fetch_and_process_data(tide_api_key=None):
+    """Fetches 7-day data, processes it, generates tables & forecast, and returns results."""
     s = build_sess()
     df_combined = pd.DataFrame()
     trend_data = []
     daily_data = []
     error_message = None
+    df_forecast = pd.DataFrame() # Initialize forecast dataframe
 
     try:
         logging.info(f"Fetching {DAYS}-day marine and wind data...")
@@ -178,6 +256,12 @@ def fetch_and_process_data():
         w_resp.raise_for_status()
         wind_data = w_resp.json()
 
+        # Fetch Tide Data
+        logging.info(f"Fetching {DAYS}-day tide data...")
+        tide_df = fetch_tide(LAT, LON, tide_api_key, days=DAYS)
+        if not tide_df.empty:
+            logging.info("Tide data fetched successfully.")
+        
         logging.info("Data fetched successfully.")
 
         marine_df = pd.DataFrame(marine_data["hourly"])
@@ -192,19 +276,59 @@ def fetch_and_process_data():
         # Convert time and merge
         marine_df["time"] = pd.to_datetime(marine_df["time"])
         wind_df["time"]   = pd.to_datetime(wind_df["time"])
-        df_combined = pd.merge(marine_df, wind_df, on="time", how="inner") # Use inner merge
+        # Ensure consistent timezone handling (convert to naive UTC for merge)
+        marine_df["time"] = marine_df["time"].dt.tz_convert(None)
+        wind_df["time"] = wind_df["time"].dt.tz_convert(None)
+        
+        df_combined = pd.merge(marine_df, wind_df, on="time", how="inner")
 
         if df_combined.empty:
-             logging.warning("Merge resulted in empty dataframe.")
-             error_message = "⚠️ Merge resulted in empty data."
+             logging.warning("Merge resulted in empty dataframe after marine/wind merge.")
+             # Still try merging tide if available, but might result empty
+        
+        # Merge Tide Data (use left merge to keep all marine/wind times)
+        if not tide_df.empty:
+            # Ensure tide_df time is also naive UTC
+            df_combined = pd.merge(df_combined, tide_df, on="time", how="left")
+        else:
+            df_combined['tide_m'] = pd.NA # Add empty column if tide fetch failed
+
+        # Re-check if empty after all merges potentially failing
+        if df_combined.empty:
+             logging.error("Final dataframe is empty after all merges.")
+             error_message = "⚠️ Failed to combine any forecast data."
              return df_combined, trend_data, daily_data, error_message
 
         # Calculate wind knots and rename wave height column
         df_combined["wind_kt"] = df_combined[WEATHER_VARS] * 1.94384
         df_combined = df_combined.rename(columns={MARINE_VARS: "wave_m"})
 
-        # Keep only necessary columns
-        df_combined = df_combined[["time", "wave_m", "wind_kt"]].sort_values(by="time").reset_index(drop=True)
+        # Ensure df_combined has a datetime index for ARIMA
+        if 'time' in df_combined.columns and not df_combined.empty:
+             df_combined_indexed = df_combined.set_index('time')
+             if 'wave_m' in df_combined_indexed.columns:
+                 # Generate ARIMA forecast using the fetched wave data
+                 df_forecast = generate_arima_forecast(df_combined_indexed['wave_m'])
+             else:
+                 logging.warning("'wave_m' column not found for ARIMA forecast.")
+             df_combined_indexed = df_combined_indexed.reset_index() # Reset index after use
+        else:
+             logging.warning("Could not generate ARIMA forecast due to missing time index or empty dataframe.")
+
+        # Merge forecast back into the main dataframe (left merge)
+        if not df_forecast.empty:
+            df_combined = pd.merge(df_combined, df_forecast, on="time", how="left")
+        else:
+            # Add wave_pred column with NAs if forecast failed
+            df_combined['wave_pred'] = pd.NA
+        
+        # Keep only necessary columns + tide
+        keep_cols = ["time", "wave_m", "wind_kt"]
+        if 'tide_m' in df_combined.columns:
+            keep_cols.append('tide_m')
+        if 'wave_pred' in df_combined.columns:
+            keep_cols.append('wave_pred') # Add wave_pred here
+        df_combined = df_combined[keep_cols].sort_values(by="time").reset_index(drop=True)
 
         # Generate tables
         trend_data = trend_table(df_combined)

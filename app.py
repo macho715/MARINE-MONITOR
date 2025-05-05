@@ -5,6 +5,33 @@ import altair as alt # Import Altair
 # Import only necessary items from fetcher
 from fetcher import fetch_and_process_data, LAT, LON#, THR_WAVE, THR_WIND # Thresholds no longer needed here
 
+# --- Simple Authentication ---
+def check_password():
+    """Returns True if the user entered the correct password."""
+    
+    # Check if APP_KEY is set in secrets
+    if "APP_KEY" not in st.secrets or not st.secrets["APP_KEY"]:
+        # If no APP_KEY is set, bypass authentication
+        return True
+        
+    # If APP_KEY is set, require password
+    password = st.text_input("🔐 Access Key", type="password")
+    if not password: # If password input is empty, stop
+        st.warning("Please enter the access key.")
+        st.stop()
+        
+    if password == st.secrets["APP_KEY"]:
+        return True
+    else:
+        st.error("🚨 Access key is incorrect.")
+        st.stop()
+        return False
+
+# Check password at the very beginning
+if not check_password():
+    st.stop() # Stop execution if password check fails
+# --- End Simple Authentication ---
+
 # Configure basic logging
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
@@ -27,21 +54,28 @@ st.markdown("---") # Separator
 # Use caching to avoid refetching data on every interaction
 # TTL = Time To Live - cache expires after 30 minutes (1800 seconds)
 @st.cache_data(ttl=1800)
-def get_data():
+def get_data(tide_api_key): # Add tide_api_key parameter
     logging.info("Cache miss or expired. Fetching new data.")
-    # Unpack the new return values from the updated fetcher function
-    df, trend_data, daily_data, error_message = fetch_and_process_data()
+    # Pass the key to the fetcher function
+    df, trend_data, daily_data, error_message = fetch_and_process_data(tide_api_key=tide_api_key)
     return df, trend_data, daily_data, error_message
 
 # Button to manually refresh data (clears cache)
 if st.button("🔄 Refresh Data"):
     st.cache_data.clear() # Clear the cache to force a refresh
 
+# --- Get Tide API Key from Secrets ---
+tide_key = st.secrets.get("TIDE_KEY", None)
+if not tide_key:
+    st.sidebar.warning("WorldTides API Key (TIDE_KEY) not found in secrets. Tide data will not be fetched.", icon="🔑")
+# --- End Get Tide API Key ---
+
 # Fetch data (uses cache if available and not expired)
 st.subheader("Forecast Summary & Sailing Decision")
 with st.spinner('Fetching latest 7-day forecast data...'):
     try:
-        df, trend_data, daily_data, error_message = get_data()
+        # Pass the tide key to get_data
+        df, trend_data, daily_data, error_message = get_data(tide_api_key=tide_key)
 
         # Display error message if fetching/processing failed
         if error_message:
@@ -51,24 +85,47 @@ with st.spinner('Fetching latest 7-day forecast data...'):
             if not df.empty:
                 st.subheader("7-Day Forecast Trend Chart")
                 
-                # Melt the dataframe for Altair
-                df_melt = df.melt(id_vars=['time'], value_vars=['wave_m', 'wind_kt'], 
-                                  var_name='Measurement', value_name='Value')
+                # Base chart for x-axis
+                base = alt.Chart(df).encode(x='time:T')
 
-                # Base chart
-                base = alt.Chart(df_melt).encode(
-                    x='time:T' # T indicates temporal type
+                # Line chart for actual wave and wind (left y-axis)
+                line_actual = base.transform_fold(
+                    fold=['wave_m', 'wind_kt'], 
+                    as_=['Measurement', 'Actual Value']
+                ).mark_line(point=False).encode(
+                    y=alt.Y('Actual Value:Q', axis=alt.Axis(title='Wave (m) / Wind (kt)', titleColor='#57A44C')),
+                    color='Measurement:N', # Color by measurement type
+                    tooltip=['time:T', 'Measurement:N', alt.Tooltip('Actual Value:Q', format='.1f')]
                 )
 
-                # Line chart for values
-                line = base.mark_line(point=True).encode(
-                    y=alt.Y('Value:Q', axis=alt.Axis(title=None)), # Q indicates quantitative type
-                    color='Measurement:N', # N indicates nominal type
-                    tooltip=['time:T', 'Measurement:N', 'Value:Q']
-                )
+                # --- Add ARIMA Forecast Line --- 
+                line_forecast = alt.LayerChart() # Initialize empty layer for forecast
+                if 'wave_pred' in df.columns and df['wave_pred'].notna().any():
+                    line_forecast = base.mark_line(point=False, strokeDash=[8,4], color='orange').encode(
+                        y=alt.Y('wave_pred:Q', axis=alt.Axis(title='Wave (m) / Wind (kt)', titleColor='#57A44C')), # Use same left axis
+                        tooltip=['time:T', alt.Tooltip('wave_pred:Q', title='Wave Forecast (ARIMA)', format='.1f')]
+                    ).properties(
+                         title=alt.TitleParams(text='Wave Forecast (ARIMA, Orange Dashed)', anchor='start')
+                    )
+                # --- End ARIMA Forecast Line ---
                 
-                st.altair_chart(line, use_container_width=True)
-                st.markdown("--- ") # Separator after chart
+                # Line chart for tide (right y-axis) - only if tide_m exists and is not all NA
+                line_tide = alt.LayerChart() # Initialize empty layer for tide
+                if 'tide_m' in df.columns and df['tide_m'].notna().any():
+                    line_tide = base.mark_line(point=False, strokeDash=[5,5], color='#4682B4').encode(
+                        y=alt.Y('tide_m:Q', axis=alt.Axis(title='Tide (m)', titleColor='#4682B4')),
+                        tooltip=['time:T', alt.Tooltip('tide_m:Q', title='Tide (m)', format='.1f')]
+                    )
+                    # Layer the charts with independent y-axes
+                    # Combine actuals, forecast (if exists), and tide (if exists)
+                    layered_chart = alt.layer(line_actual, line_forecast, line_tide).resolve_scale(y='independent')
+                    st.altair_chart(layered_chart, use_container_width=True)
+                else:
+                    # Combine actuals and forecast (if exists) if tide data is unavailable
+                    layered_chart = alt.layer(line_actual, line_forecast)
+                    st.altair_chart(layered_chart, use_container_width=True)
+                
+                st.markdown("---") # Separator after chart
             # --- End Altair Chart ---
 
             # Display Trend Table

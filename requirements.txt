@@ -4,6 +4,7 @@ requests
 pytz
 altair
 pyyaml
+statsmodels
 
 requests>=2.32
 matplotlib>=3.8
