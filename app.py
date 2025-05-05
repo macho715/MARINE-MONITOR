@@ -81,43 +81,78 @@ with st.spinner('Fetching latest 7-day forecast data...'):
         if error_message:
             st.error(error_message)
         else:
-            # --- Add Altair Chart --- 
-            if not df.empty:
-                st.subheader("7-Day Forecast Trend Chart")
-                
-                # --- Simple Altair Chart for Debugging ---
-                try:
-                    simple_chart = alt.Chart(df).mark_line().encode(
-                        x='time:T',
-                        y='wave_m:Q',
-                        tooltip=['time:T', 'wave_m:Q']
-                    ).properties(
-                        title='DEBUG: Wave Height Only'
-                    )
-                    st.altair_chart(simple_chart, use_container_width=True)
-                    st.success("DEBUG: Simple chart rendering attempted.")
-                except Exception as chart_err:
-                    st.error(f"DEBUG: Error rendering simple chart: {chart_err}")
-                # --- End Simple Altair Chart ---
+            # --- DEBUGGING CODE START ---
+            # st.subheader("(DEBUG) Data Input for Chart") # Keep commented for now
+            # if not df.empty:
+            #     st.dataframe(df.head())
+            #     import io
+            #     buffer = io.StringIO()
+            #     df.info(buf=buffer)
+            #     s = buffer.getvalue()
+            #     st.text(s)
+            # else:
+            #     st.warning("DataFrame passed to chart is empty!")
+            # st.markdown("---")
+            # --- DEBUGGING CODE END ---
 
-                # --- Original Complex Chart Code (Commented Out for Debugging) ---
-                # base = alt.Chart(df).encode(x='time:T')
-                # line_actual = base.transform_fold(...).mark_line(...).encode(...)
-                # line_forecast = alt.LayerChart()
-                # if 'wave_pred' in df.columns and df['wave_pred'].notna().any():
-                #     line_forecast = base.mark_line(...).encode(...)
-                # line_tide = alt.LayerChart()
-                # if 'tide_m' in df.columns and df['tide_m'].notna().any():
-                #     line_tide = base.mark_line(...).encode(...)
-                #     layered_chart = alt.layer(line_actual, line_forecast, line_tide).resolve_scale(y='independent')
-                #     st.altair_chart(layered_chart, use_container_width=True)
-                # else:
-                #     layered_chart = alt.layer(line_actual, line_forecast)
-                #     st.altair_chart(layered_chart, use_container_width=True)
-                # --- End Original Complex Chart Code ---
+            # --- Add Full Altair Chart (Wave, Wind, Tide, Limits) ---
+            st.subheader("7-Day Forecast Trend Chart") # Restore original subheader
+            if not df.empty:
+                try:
+                    # Define the chart creation function based on user suggestion
+                    def create_full_altair_chart(df_chart):
+                        base = alt.Chart(df_chart).encode(x=alt.X("time:T", axis=alt.Axis(title="Time"))) # Simplified axis title
+                        
+                        wave = base.mark_line(color="#1f77b4", strokeWidth=1.5).encode(
+                            y=alt.Y("wave_m:Q", axis=alt.Axis(title="SWH (m)", titleColor="#1f77b4")),
+                            tooltip=['time:T', alt.Tooltip('wave_m:Q', format='.1f', title='SWH (m)')]
+                        )
+                        
+                        wind = base.mark_line(color="#ff7f0e", strokeDash=[4,3]).encode(
+                            y=alt.Y("wind_kt:Q", axis=alt.Axis(title="Wind (kt)", titleColor="#ff7f0e")),
+                            tooltip=['time:T', alt.Tooltip('wind_kt:Q', format='.0f', title='Wind (kt)')]
+                        )
+                        
+                        tide = alt.LayerChart() # Initialize empty
+                        if 'tide_m' in df_chart.columns and df_chart['tide_m'].notna().any():
+                            tide = base.mark_line(color="#268bd2", strokeDash=[2,2]).encode(
+                                y=alt.Y("tide_m:Q", axis=alt.Axis(title="Tide (m)", titleColor="#268bd2")),
+                                tooltip=['time:T', alt.Tooltip('tide_m:Q', format='.1f', title='Tide (m)')]
+                            )
+                        
+                        # Threshold lines (using constants from fetcher if possible, else hardcode for now)
+                        # Assuming THR_WAVE=2.0, THR_WIND=12.0 are accessible or defined
+                        # If not, replace THR_WAVE and THR_WIND with 2.0 and 12.0 respectively
+                        # Let's assume we need to define them here if not imported
+                        THR_WAVE_VAL = 2.0 
+                        THR_WIND_VAL = 12.0
+                        limits_df = pd.DataFrame({
+                            "y_val": [THR_WAVE_VAL, THR_WIND_VAL],
+                            "label": [f"SWH Limit {THR_WAVE_VAL:.1f} m", f"Wind Limit {THR_WIND_VAL:.0f} kt"],
+                            "color": ["red", "orange"]
+                        })
+                        limit_rules = alt.Chart(limits_df).mark_rule(strokeDash=[4,4]).encode(
+                            y='y_val:Q',
+                            color=alt.Color('color:N', scale=None), # Use direct color names
+                            tooltip=['label:N'] 
+                        )
+                        
+                        # Layer charts
+                        chart = alt.layer(wave, wind, tide, limit_rules).resolve_scale(
+                            y='independent' # Independent Y-axes
+                        ).properties(height=350) # Slightly increased height
+                        
+                        return chart
+
+                    # Create and display the chart
+                    full_chart = create_full_altair_chart(df)
+                    st.altair_chart(full_chart, use_container_width=True)
+
+                except Exception as chart_err:
+                    st.error(f"Error rendering full chart: {chart_err}")
+            # --- End Full Altair Chart Section ---
                 
-                st.markdown("---") # Separator after chart
-            # --- End Altair Chart ---
+            st.markdown("---") # Separator after chart
 
             # Display Trend Table
             st.markdown("**2-Day & 7-Day 트렌드 요약표 (단위: m / kt)**")
