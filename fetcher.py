@@ -332,8 +332,8 @@ def fetch_and_process_data(tide_api_key=None):
              if df_combined_indexed.index.tz is None:
                   df_combined_indexed = df_combined_indexed.tz_localize('UTC')
                   
-             # --- Add asfreq('H') to set frequency explicitly --- 
-             df_combined_indexed = df_combined_indexed.asfreq('H')
+             # --- Add asfreq('h') to set frequency explicitly --- 
+             df_combined_indexed = df_combined_indexed.asfreq('h')
              # --- End frequency setting ---
              
              if 'wave_m' in df_combined_indexed.columns:
