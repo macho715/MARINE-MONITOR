@@ -175,6 +175,9 @@ def fetch_tide(lat, lon, api_key, days=7):
             return pd.DataFrame(columns=["time", "tide_m"])
             
         df["time"] = pd.to_datetime(df["date"])
+        # Standardize timezone: Localize to UTC if naive, then convert to naive UTC
+        if df["time"].dt.tz is None:
+            df["time"] = df["time"].dt.tz_localize('UTC') # Assume naive timestamps are UTC
         df["time"] = df["time"].dt.tz_convert(None) # Convert to naive UTC for merging
         return df[["time", "height"]].rename(columns={"height": "tide_m"})
     except requests.exceptions.RequestException as e:
@@ -273,26 +276,43 @@ def fetch_and_process_data(tide_api_key=None):
             error_message = "⚠️ Received empty data from API."
             return df_combined, trend_data, daily_data, error_message
 
-        # Convert time and merge
-        marine_df["time"] = pd.to_datetime(marine_df["time"])
-        wind_df["time"]   = pd.to_datetime(wind_df["time"])
-        # Ensure consistent timezone handling (convert to naive UTC for merge)
-        marine_df["time"] = marine_df["time"].dt.tz_convert(None)
-        wind_df["time"] = wind_df["time"].dt.tz_convert(None)
-        
-        df_combined = pd.merge(marine_df, wind_df, on="time", how="inner")
+        # Standardize timezones before merge
+        if not marine_df.empty:
+            marine_df["time"] = pd.to_datetime(marine_df["time"])
+            if marine_df["time"].dt.tz is None:
+                marine_df["time"] = marine_df["time"].dt.tz_localize('UTC')
+            marine_df["time"] = marine_df["time"].dt.tz_convert(None)
 
-        if df_combined.empty:
-             logging.warning("Merge resulted in empty dataframe after marine/wind merge.")
-             # Still try merging tide if available, but might result empty
+        if not wind_df.empty:
+            wind_df["time"] = pd.to_datetime(wind_df["time"])
+            if wind_df["time"].dt.tz is None:
+                wind_df["time"] = wind_df["time"].dt.tz_localize('UTC')
+            wind_df["time"] = wind_df["time"].dt.tz_convert(None)
+
+        # tide_df timezone is already standardized within fetch_tide function
         
+        # Merge marine and wind first
+        if not marine_df.empty and not wind_df.empty:
+            df_combined = pd.merge(marine_df, wind_df, on="time", how="inner")
+        elif not marine_df.empty:
+            df_combined = marine_df
+        elif not wind_df.empty:
+            df_combined = wind_df
+        else:
+            # Handle case where both marine and wind fetch failed
+            logging.error("Both marine and wind data fetching failed.")
+            error_message = "⚠️ Failed to fetch marine and wind data."
+            # Return tide df if available, otherwise empty
+            df_final = tide_df if not tide_df.empty else pd.DataFrame()
+            return df_final, [], [], error_message
+
         # Merge Tide Data (use left merge to keep all marine/wind times)
         if not tide_df.empty:
-            # Ensure tide_df time is also naive UTC
             df_combined = pd.merge(df_combined, tide_df, on="time", how="left")
         else:
-            df_combined['tide_m'] = pd.NA # Add empty column if tide fetch failed
-
+            if not df_combined.empty: # Add tide_m only if df_combined is not empty
+                 df_combined['tide_m'] = pd.NA
+        
         # Re-check if empty after all merges potentially failing
         if df_combined.empty:
              logging.error("Final dataframe is empty after all merges.")
