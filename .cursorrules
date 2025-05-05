@@ -1,0 +1,8 @@
+[terminal]
+allow = ["npm *", "pytest", "go test ./...", "mvn test"]
+deny  = ["rm *", "sudo *", "docker system prune *", "git reset --hard *"]
+
+[allowedFolders]
+src     = true
+tests   = true
+scripts = true
