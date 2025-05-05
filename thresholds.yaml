@@ -1,0 +1,15 @@
+LOLO:
+  swh:   1.0      # Significant Wave Height (m)
+  wind:  10.0     # Wind speed 10 m (m/s)
+  swell: 0.5      # Swell (m)
+  dir_tol: 60     # 파·풍 방향 허용각도(±°)
+
+RORO:
+  swh:   0.6
+  wind:  8.0
+  swell: 0.3
+  dir_tol: 30
+
+SAIL:
+  swh:   2.0
+  wind:  12.0 
