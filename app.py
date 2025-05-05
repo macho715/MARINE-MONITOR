@@ -95,62 +95,65 @@ with st.spinner('Fetching latest 7-day forecast data...'):
             # st.markdown("---")
             # --- DEBUGGING CODE END ---
 
-            # --- Add Full Altair Chart (Wave, Wind, Tide, Limits) ---
+            # --- Add Checkbox Toggle Chart (Wave, Wind, Tide) ---
             st.subheader("7-Day Forecast Trend Chart") # Restore original subheader
             if not df.empty:
                 try:
-                    # Define the chart creation function based on user suggestion
-                    def create_full_altair_chart(df_chart):
-                        base = alt.Chart(df_chart).encode(x=alt.X("time:T", axis=alt.Axis(title="Time"))) # Simplified axis title
-                        
+                    # --- 1) Checkboxes for Series Selection ---
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        show_wave = st.checkbox("🌊 SWH (m)", value=True)
+                    with col2:
+                        show_wind = st.checkbox("💨 Wind (kt)", value=True)
+                    with col3:
+                        # Only show tide checkbox if tide data is available
+                        show_tide = False 
+                        if 'tide_m' in df.columns and df['tide_m'].notna().any():
+                            show_tide = st.checkbox("🌑 Tide (m)", value=False)
+                    st.markdown("<hr style='margin-top:0; margin-bottom:1rem;'>", unsafe_allow_html=True)
+                    
+                    # --- 2) Define Altair Layers Conditionally ---
+                    base = alt.Chart(df).encode(x=alt.X("time:T", axis=alt.Axis(title="Time"))) # Use simplified axis title from previous edit
+                    
+                    layers = []
+                    
+                    if show_wave:
                         wave = base.mark_line(color="#1f77b4", strokeWidth=1.5).encode(
                             y=alt.Y("wave_m:Q", axis=alt.Axis(title="SWH (m)", titleColor="#1f77b4")),
                             tooltip=['time:T', alt.Tooltip('wave_m:Q', format='.1f', title='SWH (m)')]
                         )
-                        
-                        wind = base.mark_line(color="#ff7f0e", strokeDash=[4,3]).encode(
+                        layers.append(wave)
+                    
+                    if show_wind:
+                        wind = base.mark_line(color="#ff7f0e", strokeWidth=1.5, strokeDash=[4,3]).encode(
                             y=alt.Y("wind_kt:Q", axis=alt.Axis(title="Wind (kt)", titleColor="#ff7f0e")),
                             tooltip=['time:T', alt.Tooltip('wind_kt:Q', format='.0f', title='Wind (kt)')]
                         )
-                        
-                        tide = alt.LayerChart() # Initialize empty
-                        if 'tide_m' in df_chart.columns and df_chart['tide_m'].notna().any():
-                            tide = base.mark_line(color="#268bd2", strokeDash=[2,2]).encode(
-                                y=alt.Y("tide_m:Q", axis=alt.Axis(title="Tide (m)", titleColor="#268bd2")),
-                                tooltip=['time:T', alt.Tooltip('tide_m:Q', format='.1f', title='Tide (m)')]
-                            )
-                        
-                        # Threshold lines (using constants from fetcher if possible, else hardcode for now)
-                        # Assuming THR_WAVE=2.0, THR_WIND=12.0 are accessible or defined
-                        # If not, replace THR_WAVE and THR_WIND with 2.0 and 12.0 respectively
-                        # Let's assume we need to define them here if not imported
-                        THR_WAVE_VAL = 2.0 
-                        THR_WIND_VAL = 12.0
-                        limits_df = pd.DataFrame({
-                            "y_val": [THR_WAVE_VAL, THR_WIND_VAL],
-                            "label": [f"SWH Limit {THR_WAVE_VAL:.1f} m", f"Wind Limit {THR_WIND_VAL:.0f} kt"],
-                            "color": ["red", "orange"]
-                        })
-                        limit_rules = alt.Chart(limits_df).mark_rule(strokeDash=[4,4]).encode(
-                            y='y_val:Q',
-                            color=alt.Color('color:N', scale=None), # Use direct color names
-                            tooltip=['label:N'] 
+                        layers.append(wind)
+                    
+                    if show_tide and 'tide_m' in df.columns: # Double check column exists
+                        tide = base.mark_line(color="#268bd2", strokeDash=[2,2]).encode(
+                            y=alt.Y("tide_m:Q", axis=alt.Axis(title="Tide (m)", titleColor="#268bd2")),
+                            tooltip=['time:T', alt.Tooltip('tide_m:Q', format='.1f', title='Tide (m)')]
                         )
+                        layers.append(tide)
                         
-                        # Layer charts
-                        chart = alt.layer(wave, wind, tide, limit_rules).resolve_scale(
-                            y='independent' # Independent Y-axes
-                        ).properties(height=350) # Slightly increased height
+                    # --- 3) Render Layered Chart ---
+                    if layers:
+                        chart = alt.layer(*layers).resolve_scale(y="independent").properties(height=350)
+                        st.altair_chart(chart, use_container_width=True)
+                    else:
+                        # Display a message if no series are selected
+                        st.info("위에 있는 체크박스를 선택하여 그래프에 표시할 데이터를 고르세요.") 
+                        # Optionally display an empty chart area or specific placeholder
+                        # placeholder_chart = alt.Chart(pd.DataFrame({'x':[df['time'].min(), df['time'].max()]})).mark_text().encode(x='x:T').properties(height=350)
+                        # st.altair_chart(placeholder_chart, use_container_width=True)
                         
-                        return chart
-
-                    # Create and display the chart
-                    full_chart = create_full_altair_chart(df)
-                    st.altair_chart(full_chart, use_container_width=True)
-
                 except Exception as chart_err:
-                    st.error(f"Error rendering full chart: {chart_err}")
-            # --- End Full Altair Chart Section ---
+                    st.error(f"Error rendering checkbox chart: {chart_err}")
+            else: # Handle case where df is empty initially
+                  st.warning("No forecast data available to plot.")
+            # --- End Checkbox Toggle Chart Section ---
                 
             st.markdown("---") # Separator after chart
 
