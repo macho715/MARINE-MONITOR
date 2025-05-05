@@ -109,6 +109,8 @@ def daily_table(df):
         if day_df.empty: continue
 
         # Ensure 'time' is datetime before accessing .dt.hour
+        # Fix SettingWithCopyWarning by explicitly creating a copy
+        day_df = day_df.copy()
         day_df['time'] = pd.to_datetime(day_df['time'])
 
         a = day_df[(day_df["time"].dt.hour >= 0) & (day_df["time"].dt.hour < 12)]

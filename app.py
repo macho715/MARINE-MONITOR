@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import logging
+import altair as alt # Import Altair
 # Import only necessary items from fetcher
 from fetcher import fetch_and_process_data, LAT, LON#, THR_WAVE, THR_WIND # Thresholds no longer needed here
 
@@ -24,8 +25,8 @@ st.caption(f"Monitoring conditions near Lat: {LAT}, Lon: {LON}")
 st.markdown("---") # Separator
 
 # Use caching to avoid refetching data on every interaction
-# TTL = Time To Live - cache expires after 10 minutes (600 seconds)
-@st.cache_data(ttl=600)
+# TTL = Time To Live - cache expires after 30 minutes (1800 seconds)
+@st.cache_data(ttl=1800)
 def get_data():
     logging.info("Cache miss or expired. Fetching new data.")
     # Unpack the new return values from the updated fetcher function
@@ -46,6 +47,30 @@ with st.spinner('Fetching latest 7-day forecast data...'):
         if error_message:
             st.error(error_message)
         else:
+            # --- Add Altair Chart --- 
+            if not df.empty:
+                st.subheader("7-Day Forecast Trend Chart")
+                
+                # Melt the dataframe for Altair
+                df_melt = df.melt(id_vars=['time'], value_vars=['wave_m', 'wind_kt'], 
+                                  var_name='Measurement', value_name='Value')
+
+                # Base chart
+                base = alt.Chart(df_melt).encode(
+                    x='time:T' # T indicates temporal type
+                )
+
+                # Line chart for values
+                line = base.mark_line(point=True).encode(
+                    y=alt.Y('Value:Q', axis=alt.Axis(title=None)), # Q indicates quantitative type
+                    color='Measurement:N', # N indicates nominal type
+                    tooltip=['time:T', 'Measurement:N', 'Value:Q']
+                )
+                
+                st.altair_chart(line, use_container_width=True)
+                st.markdown("--- ") # Separator after chart
+            # --- End Altair Chart ---
+
             # Display Trend Table
             st.markdown("**2-Day & 7-Day 트렌드 요약표 (단위: m / kt)**")
             if trend_data:
