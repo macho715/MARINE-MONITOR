@@ -85,6 +85,13 @@ with st.spinner('Fetching latest 7-day forecast data...'):
             if not df.empty:
                 st.subheader("7-Day Forecast Trend Chart")
                 
+                # --- DEBUGGING CODE START ---
+                st.subheader("(DEBUG) Data Input for Chart")
+                st.dataframe(df.head()) # Display first 5 rows
+                st.write(df.info()) # Display DataFrame info (columns, types, nulls)
+                st.markdown("---")
+                # --- DEBUGGING CODE END ---
+
                 # Base chart for x-axis
                 base = alt.Chart(df).encode(x='time:T')
 
