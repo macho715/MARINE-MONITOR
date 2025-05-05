@@ -332,7 +332,12 @@ def fetch_and_process_data(tide_api_key=None):
              if df_combined_indexed.index.tz is None:
                   df_combined_indexed = df_combined_indexed.tz_localize('UTC')
                   
+             # --- Add asfreq('H') to set frequency explicitly --- 
+             df_combined_indexed = df_combined_indexed.asfreq('H')
+             # --- End frequency setting ---
+             
              if 'wave_m' in df_combined_indexed.columns:
+                 # Pass the resampled series to the forecast function
                  df_forecast = generate_arima_forecast(df_combined_indexed['wave_m'])
              else:
                  logging.warning("'wave_m' column not found for ARIMA forecast.")
