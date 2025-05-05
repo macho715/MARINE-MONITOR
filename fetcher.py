@@ -174,11 +174,10 @@ def fetch_tide(lat, lon, api_key, days=7):
             logging.warning("WorldTides API returned no height data.")
             return pd.DataFrame(columns=["time", "tide_m"])
             
-        df["time"] = pd.to_datetime(df["date"])
-        # Standardize timezone: Localize to UTC if naive, then convert to naive UTC
-        if df["time"].dt.tz is None:
-            df["time"] = df["time"].dt.tz_localize('UTC') # Assume naive timestamps are UTC
-        df["time"] = df["time"].dt.tz_convert(None) # Convert to naive UTC for merging
+        # Convert to datetime, ensure aware UTC, then convert to naive UTC
+        df["time"] = pd.to_datetime(df["date"], utc=True)
+        df["time"] = df["time"].dt.tz_localize(None) 
+        
         return df[["time", "height"]].rename(columns={"height": "tide_m"})
     except requests.exceptions.RequestException as e:
         logging.error(f"WorldTides API request failed: {e}")
@@ -211,15 +210,19 @@ def generate_arima_forecast(wave_series):
         # Forecast next 48 steps (hours)
         forecast_values = model_fit.forecast(steps=48)
         
-        # Create forecast timestamps
-        last_timestamp = wave_series.index.max()
-        # Use pd.date_range for robust timestamp generation
+        # Create forecast timestamps (already starts from aware UTC/timezone from index)
+        last_timestamp = wave_series.index.max() 
         forecast_index = pd.date_range(start=last_timestamp + pd.Timedelta(hours=1), periods=48, freq='h')
         
-        # Create forecast DataFrame
         df_pred = pd.DataFrame({"time": forecast_index, "wave_pred": forecast_values})
+        
         # Ensure time is naive UTC like the main df
-        df_pred["time"] = df_pred["time"].dt.tz_convert(None)
+        # Check if index is timezone aware before converting
+        if df_pred["time"].dt.tz is not None:
+             df_pred["time"] = df_pred["time"].dt.tz_convert('UTC').dt.tz_localize(None)
+        else: # If somehow already naive, assume it was intended as UTC naive
+             pass 
+             
         logging.info("ARIMA forecast generated successfully.")
         return df_pred
         
@@ -276,18 +279,14 @@ def fetch_and_process_data(tide_api_key=None):
             error_message = "⚠️ Received empty data from API."
             return df_combined, trend_data, daily_data, error_message
 
-        # Standardize timezones before merge
+        # Standardize timezones before merge: Convert to aware UTC, then to naive UTC
         if not marine_df.empty:
-            marine_df["time"] = pd.to_datetime(marine_df["time"])
-            if marine_df["time"].dt.tz is None:
-                marine_df["time"] = marine_df["time"].dt.tz_localize('UTC')
-            marine_df["time"] = marine_df["time"].dt.tz_convert(None)
+            marine_df["time"] = pd.to_datetime(marine_df["time"], utc=True)
+            marine_df["time"] = marine_df["time"].dt.tz_localize(None)
 
         if not wind_df.empty:
-            wind_df["time"] = pd.to_datetime(wind_df["time"])
-            if wind_df["time"].dt.tz is None:
-                wind_df["time"] = wind_df["time"].dt.tz_localize('UTC')
-            wind_df["time"] = wind_df["time"].dt.tz_convert(None)
+            wind_df["time"] = pd.to_datetime(wind_df["time"], utc=True)
+            wind_df["time"] = wind_df["time"].dt.tz_localize(None)
 
         # tide_df timezone is already standardized within fetch_tide function
         
@@ -325,22 +324,29 @@ def fetch_and_process_data(tide_api_key=None):
 
         # Ensure df_combined has a datetime index for ARIMA
         if 'time' in df_combined.columns and not df_combined.empty:
+             # Convert time column to datetime objects first if not already
+             df_combined['time'] = pd.to_datetime(df_combined['time'])
+             # Set index AFTER converting to datetime
              df_combined_indexed = df_combined.set_index('time')
+             # Localize index to UTC before passing to ARIMA if it's naive
+             if df_combined_indexed.index.tz is None:
+                  df_combined_indexed = df_combined_indexed.tz_localize('UTC')
+                  
              if 'wave_m' in df_combined_indexed.columns:
-                 # Generate ARIMA forecast using the fetched wave data
                  df_forecast = generate_arima_forecast(df_combined_indexed['wave_m'])
              else:
                  logging.warning("'wave_m' column not found for ARIMA forecast.")
-             df_combined_indexed = df_combined_indexed.reset_index() # Reset index after use
+             # No need to reset index here, merge uses the 'time' column
         else:
              logging.warning("Could not generate ARIMA forecast due to missing time index or empty dataframe.")
+             df_forecast = pd.DataFrame(columns=["time", "wave_pred"]) # Ensure empty df is created
 
         # Merge forecast back into the main dataframe (left merge)
         if not df_forecast.empty:
             df_combined = pd.merge(df_combined, df_forecast, on="time", how="left")
         else:
-            # Add wave_pred column with NAs if forecast failed
-            df_combined['wave_pred'] = pd.NA
+            if not df_combined.empty:
+                 df_combined['wave_pred'] = pd.NA
         
         # Keep only necessary columns + tide
         keep_cols = ["time", "wave_m", "wind_kt"]
