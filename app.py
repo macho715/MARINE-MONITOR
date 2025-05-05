@@ -85,52 +85,36 @@ with st.spinner('Fetching latest 7-day forecast data...'):
             if not df.empty:
                 st.subheader("7-Day Forecast Trend Chart")
                 
-                # --- DEBUGGING CODE START ---
-                st.subheader("(DEBUG) Data Input for Chart")
-                st.dataframe(df.head()) # Display first 5 rows
-                st.write(df.info()) # Display DataFrame info (columns, types, nulls)
-                st.markdown("---")
-                # --- DEBUGGING CODE END ---
-
-                # Base chart for x-axis
-                base = alt.Chart(df).encode(x='time:T')
-
-                # Line chart for actual wave and wind (left y-axis)
-                line_actual = base.transform_fold(
-                    fold=['wave_m', 'wind_kt'], 
-                    as_=['Measurement', 'Actual Value']
-                ).mark_line(point=False).encode(
-                    y=alt.Y('Actual Value:Q', axis=alt.Axis(title='Wave (m) / Wind (kt)', titleColor='#57A44C')),
-                    color='Measurement:N', # Color by measurement type
-                    tooltip=['time:T', 'Measurement:N', alt.Tooltip('Actual Value:Q', format='.1f')]
-                )
-
-                # --- Add ARIMA Forecast Line --- 
-                line_forecast = alt.LayerChart() # Initialize empty layer for forecast
-                if 'wave_pred' in df.columns and df['wave_pred'].notna().any():
-                    line_forecast = base.mark_line(point=False, strokeDash=[8,4], color='orange').encode(
-                        y=alt.Y('wave_pred:Q', axis=alt.Axis(title='Wave (m) / Wind (kt)', titleColor='#57A44C')), # Use same left axis
-                        tooltip=['time:T', alt.Tooltip('wave_pred:Q', title='Wave Forecast (ARIMA)', format='.1f')]
+                # --- Simple Altair Chart for Debugging ---
+                try:
+                    simple_chart = alt.Chart(df).mark_line().encode(
+                        x='time:T',
+                        y='wave_m:Q',
+                        tooltip=['time:T', 'wave_m:Q']
                     ).properties(
-                         title=alt.TitleParams(text='Wave Forecast (ARIMA, Orange Dashed)', anchor='start')
+                        title='DEBUG: Wave Height Only'
                     )
-                # --- End ARIMA Forecast Line ---
-                
-                # Line chart for tide (right y-axis) - only if tide_m exists and is not all NA
-                line_tide = alt.LayerChart() # Initialize empty layer for tide
-                if 'tide_m' in df.columns and df['tide_m'].notna().any():
-                    line_tide = base.mark_line(point=False, strokeDash=[5,5], color='#4682B4').encode(
-                        y=alt.Y('tide_m:Q', axis=alt.Axis(title='Tide (m)', titleColor='#4682B4')),
-                        tooltip=['time:T', alt.Tooltip('tide_m:Q', title='Tide (m)', format='.1f')]
-                    )
-                    # Layer the charts with independent y-axes
-                    # Combine actuals, forecast (if exists), and tide (if exists)
-                    layered_chart = alt.layer(line_actual, line_forecast, line_tide).resolve_scale(y='independent')
-                    st.altair_chart(layered_chart, use_container_width=True)
-                else:
-                    # Combine actuals and forecast (if exists) if tide data is unavailable
-                    layered_chart = alt.layer(line_actual, line_forecast)
-                    st.altair_chart(layered_chart, use_container_width=True)
+                    st.altair_chart(simple_chart, use_container_width=True)
+                    st.success("DEBUG: Simple chart rendering attempted.")
+                except Exception as chart_err:
+                    st.error(f"DEBUG: Error rendering simple chart: {chart_err}")
+                # --- End Simple Altair Chart ---
+
+                # --- Original Complex Chart Code (Commented Out for Debugging) ---
+                # base = alt.Chart(df).encode(x='time:T')
+                # line_actual = base.transform_fold(...).mark_line(...).encode(...)
+                # line_forecast = alt.LayerChart()
+                # if 'wave_pred' in df.columns and df['wave_pred'].notna().any():
+                #     line_forecast = base.mark_line(...).encode(...)
+                # line_tide = alt.LayerChart()
+                # if 'tide_m' in df.columns and df['tide_m'].notna().any():
+                #     line_tide = base.mark_line(...).encode(...)
+                #     layered_chart = alt.layer(line_actual, line_forecast, line_tide).resolve_scale(y='independent')
+                #     st.altair_chart(layered_chart, use_container_width=True)
+                # else:
+                #     layered_chart = alt.layer(line_actual, line_forecast)
+                #     st.altair_chart(layered_chart, use_container_width=True)
+                # --- End Original Complex Chart Code ---
                 
                 st.markdown("---") # Separator after chart
             # --- End Altair Chart ---
