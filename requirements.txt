@@ -9,4 +9,7 @@ statsmodels
 requests>=2.32
 matplotlib>=3.8
 slack_sdk>=3.27
-python-dotenv>=1.0 
+python-dotenv>=1.0
+numpy
+camelot-py[cv]
+PyPDF2 
